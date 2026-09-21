@@ -39,6 +39,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 BUILD = ROOT / "build"
 INDEX = ROOT / "plugins.json"
 PAGE = ROOT / "docs/catalog.md"
+PAGE_EN = ROOT / "docs/catalog.en.md"
 TEMPLATE = ROOT / "templates/hello.fastplugin"
 
 API_VERSION = 1
@@ -98,7 +99,7 @@ def every_plugin(names: list[str]) -> list[pathlib.Path]:
     if names:
         return [plugin_path(name) for name in names]
     found = plugin_folders()
-    if not found:
+    if not found and not INDEX.exists():
         fail(f"не найдено ни одного плагина в {ROOT}")
     return found
 
@@ -401,38 +402,61 @@ def inspect_archive(name: str, body: bytes) -> list[str]:
     return problems
 
 
+WORDS = {
+    "ru": {
+        "author": "Автор", "version": "Версия", "asks": "Просит", "reaches": "Обращается к",
+        "nothing": "ничего не просит", "setting": "адрес из настроек плагина",
+        "ours": "## От команды FastAction", "theirs": "## От сообщества",
+        "empty": "Пока ничего.",
+        "invite": "Пока ничего. Ваш плагин может быть первым — как прислать, написано ниже.",
+        "generated": "<!-- Этот раздел собирается из plugins.json: tools/fastplugin index page -->",
+    },
+    "en": {
+        "author": "Author", "version": "Version", "asks": "Asks for", "reaches": "Talks to",
+        "nothing": "asks for nothing", "setting": "the address from the plugin's own settings",
+        "ours": "## From the FastAction team", "theirs": "## From the community",
+        "empty": "Nothing yet.",
+        "invite": "Nothing yet. Yours could be the first — how to send it is written below.",
+        "generated": "<!-- This section is generated from plugins.json: tools/fastplugin index page -->",
+    },
+}
+
+
 def index_page() -> int:
     data = load_index()
 
-    def block(record):
-        lines = [f"### [{record['name']}]({record['repository']})", "", record["description"], ""]
-        lines.append(f"- Автор: {record['author']}")
-        lines.append(f"- Версия: {record.get('version', '1.0')}")
-        asked = ", ".join(record.get("permissions", [])) or "ничего не просит"
-        lines.append(f"- Просит: {asked}")
+    def block(record, language):
+        words = WORDS[language]
+        text = record.get("descriptionEn") if language == "en" else None
+        lines = [f"### [{record['name']}]({record['repository']})", "",
+                 text or record["description"], ""]
+        lines.append(f"- {words['author']}: {record['author']}")
+        lines.append(f"- {words['version']}: {record.get('version', '1.0')}")
+        asked = ", ".join(record.get("permissions", [])) or words["nothing"]
+        lines.append(f"- {words['asks']}: {asked}")
         hosts = record.get("hosts", [])
         if hosts:
-            readable = ", ".join("адрес из настроек плагина" if host.startswith("$setting:") else host for host in hosts)
-            lines.append(f"- Обращается к: {readable}")
+            readable = ", ".join(words["setting"] if host.startswith("$setting:") else host for host in hosts)
+            lines.append(f"- {words['reaches']}: {readable}")
         return "\n".join(lines)
 
     ours = [record for record in data["plugins"] if record.get("official")]
     theirs = [record for record in data["plugins"] if not record.get("official")]
-    text = PAGE.read_text(encoding="utf-8") if PAGE.exists() else ""
-    head = text.split("<!-- список -->")[0] if "<!-- список -->" in text else ""
-    if not head:
-        fail("в docs/catalog.md нет метки <!-- список -->")
-    parts = [head.rstrip(), "", "<!-- список -->", ""]
-    parts.append("<!-- Этот раздел собирается из plugins.json: tools/fastplugin index page -->")
-    parts += ["", "## От команды FastAction", ""]
-    parts.append("\n\n".join(block(record) for record in ours) if ours else "Пока ничего.")
-    parts += ["", "## От сообщества", ""]
-    parts.append("\n\n".join(block(record) for record in theirs) if theirs
-                 else "Пока ничего. Ваш плагин может быть первым — как прислать, написано ниже.")
-    tail = text.split("<!-- /список -->")[1] if "<!-- /список -->" in text else ""
-    parts += ["", "<!-- /список -->", tail.lstrip()]
-    PAGE.write_text("\n".join(parts).rstrip() + "\n", encoding="utf-8")
-    print(f"  {PAGE.relative_to(ROOT)} собран из {len(data['plugins'])} записей")
+    for page, language in ((PAGE, "ru"), (PAGE_EN, "en")):
+        words = WORDS[language]
+        text = page.read_text(encoding="utf-8") if page.exists() else ""
+        head = text.split("<!-- список -->")[0] if "<!-- список -->" in text else ""
+        if not head:
+            fail(f"в {page.name} нет метки <!-- список -->")
+        parts = [head.rstrip(), "", "<!-- список -->", "", words["generated"]]
+        parts += ["", words["ours"], ""]
+        parts.append("\n\n".join(block(record, language) for record in ours) if ours else words["empty"])
+        parts += ["", words["theirs"], ""]
+        parts.append("\n\n".join(block(record, language) for record in theirs) if theirs else words["invite"])
+        tail = text.split("<!-- /список -->")[1] if "<!-- /список -->" in text else ""
+        parts += ["", "<!-- /список -->", tail.lstrip()]
+        page.write_text("\n".join(parts).rstrip() + "\n", encoding="utf-8")
+        print(f"  {page.relative_to(ROOT)} собран из {len(data['plugins'])} записей")
     return 0
 
 
